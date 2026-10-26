@@ -71,5 +71,19 @@ namespace LocalFileDB.Services
         /// </summary>
         public void ShowWarning(string message, string title) =>
             MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+
+        /// <summary>
+        /// Asks whether to save, discard, or cancel before leaving an edited database.
+        /// </summary>
+        public UnsavedChangesChoice AskAboutUnsavedChanges(string message, string title)
+        {
+            var result = MessageBox.Show(message, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+            return result switch
+            {
+                MessageBoxResult.Yes => UnsavedChangesChoice.Save,
+                MessageBoxResult.No => UnsavedChangesChoice.Discard,
+                _ => UnsavedChangesChoice.Cancel
+            };
+        }
     }
 }

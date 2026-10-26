@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using LocalFileDB.Services;
 using LocalFileDB.ViewModels;
@@ -19,6 +20,17 @@ namespace LocalFileDB.Views
                 new FileDatabaseService(),
                 new AppSettingsStore(),
                 new WindowsDialogService());
+        }
+
+        /// <summary>
+        /// Lets the ViewModel resolve unsaved edits before WPF closes the window.
+        /// </summary>
+        private void Window_Closing(object? sender, CancelEventArgs e)
+        {
+            if (DataContext is MainWindowViewModel viewModel)
+            {
+                e.Cancel = !viewModel.ConfirmClose();
+            }
         }
     }
 }

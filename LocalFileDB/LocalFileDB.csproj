@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assest\main-icon.png" />
     <None Update="Assest\main-icon.png">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>

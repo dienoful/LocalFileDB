@@ -24,6 +24,9 @@ namespace LocalFileDB.ViewModels
         private string _rootDirectory = string.Empty;
         private string _fileNameFilter = string.Empty;
         private string _newTagName = string.Empty;
+        private bool _onlyMissingFiles;
+        private bool _isModified;
+        private bool _isApplyingDatabase;
         private FileEntryViewModel? _selectedFile;
         private BitmapSource? _previewImage;
         private string _previewMessage = "Select a file to preview.";
@@ -48,6 +51,7 @@ namespace LocalFileDB.ViewModels
             RemoveSelectedFileCommand = new RelayCommand(_ => RemoveSelectedFile(), _ => SelectedFile is not null);
             BrowseRootDirectoryCommand = new RelayCommand(_ => BrowseRootDirectory(), _ => IsDatabaseOpen);
             AddTagCommand = new RelayCommand(_ => AddTagToSelectedFile(), _ => SelectedFile is not null && !string.IsNullOrWhiteSpace(NewTagName));
+            ResetFiltersCommand = new RelayCommand(_ => ResetFilters(), _ => IsDatabaseOpen);
 
             RefreshRecentDatabases();
         }
@@ -61,8 +65,8 @@ namespace LocalFileDB.ViewModels
         /// Gets the title displayed by the main window.
         /// </summary>
         public string WindowTitle => string.IsNullOrWhiteSpace(DatabaseName)
-            ? "LocalFileDB"
-            : $"{DatabaseName} - LocalFileDB";
+            ? $"LocalFileDB{(IsModified ? " *" : string.Empty)}"
+            : $"{DatabaseName}{(IsModified ? " *" : string.Empty)} - LocalFileDB";
 
         /// <summary>
         /// Gets or sets the editable catalog name.
@@ -75,6 +79,10 @@ namespace LocalFileDB.ViewModels
                 if (SetProperty(ref _databaseName, value))
                 {
                     OnPropertyChanged(nameof(WindowTitle));
+                    if (!_isApplyingDatabase)
+                    {
+                        MarkModified();
+                    }
                 }
             }
         }
@@ -85,7 +93,13 @@ namespace LocalFileDB.ViewModels
         public string RootDirectory
         {
             get => _rootDirectory;
-            private set => SetProperty(ref _rootDirectory, value);
+            private set
+            {
+                if (SetProperty(ref _rootDirectory, value) && !_isApplyingDatabase)
+                {
+                    MarkModified();
+                }
+            }
         }
 
         /// <summary>
@@ -102,6 +116,7 @@ namespace LocalFileDB.ViewModels
                     AddFilesCommand.NotifyCanExecuteChanged();
                     SaveDatabaseCommand.NotifyCanExecuteChanged();
                     BrowseRootDirectoryCommand.NotifyCanExecuteChanged();
+                    ResetFiltersCommand.NotifyCanExecuteChanged();
                 }
             }
         }
@@ -115,6 +130,41 @@ namespace LocalFileDB.ViewModels
         /// Gets whether a file is selected in the catalog.
         /// </summary>
         public bool HasSelectedFile => SelectedFile is not null;
+
+        /// <summary>
+        /// Gets or sets whether only file entries with missing paths are displayed.
+        /// </summary>
+        public bool OnlyMissingFiles
+        {
+            get => _onlyMissingFiles;
+            set
+            {
+                if (SetProperty(ref _onlyMissingFiles, value))
+                {
+                    foreach (var file in Files)
+                    {
+                        file.RefreshSystemMetadata();
+                    }
+
+                    RefreshDisplayedFiles();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets whether the current database contains edits that have not been saved.
+        /// </summary>
+        public bool IsModified
+        {
+            get => _isModified;
+            private set
+            {
+                if (SetProperty(ref _isModified, value))
+                {
+                    OnPropertyChanged(nameof(WindowTitle));
+                }
+            }
+        }
 
         /// <summary>
         /// Gets the label describing the current tag-filter selection.
@@ -156,6 +206,32 @@ namespace LocalFileDB.ViewModels
                     RefreshDisplayedFiles();
                 }
             }
+        }
+
+        /// <summary>
+        /// Gets the command that clears every active filter.
+        /// </summary>
+        public RelayCommand ResetFiltersCommand { get; }
+
+        /// <summary>
+        /// Resolves unsaved edits before the main window closes.
+        /// </summary>
+        public bool ConfirmClose()
+        {
+            if (!IsModified)
+            {
+                return true;
+            }
+
+            var choice = _dialogService.AskAboutUnsavedChanges(
+                $"Save changes to '{DatabaseName}' before closing?",
+                "Unsaved changes");
+            return choice switch
+            {
+                UnsavedChangesChoice.Save => SaveDatabase(),
+                UnsavedChangesChoice.Discard => true,
+                _ => false
+            };
         }
 
         /// <summary>
@@ -275,18 +351,54 @@ namespace LocalFileDB.ViewModels
                     .Select(entry => CreateFileItem(entry, database.RootDirectory, databaseTags))
                     .ToList();
 
-                SelectedFile = null;
-                FileNameFilter = string.Empty;
-                Files.Clear();
-                foreach (var fileItem in fileItems)
+                var openingSameDatabase = string.Equals(_databaseFilePath, fullPath, StringComparison.OrdinalIgnoreCase);
+                if (IsModified)
                 {
-                    Files.Add(fileItem);
-                }
-                RefreshAvailableTags(preserveSelection: false);
+                    var choice = _dialogService.AskAboutUnsavedChanges(
+                        $"Save changes to '{DatabaseName}' before continuing?",
+                        "Unsaved changes");
+                    if (choice == UnsavedChangesChoice.Cancel)
+                    {
+                        return;
+                    }
 
-                DatabaseFilePath = fullPath;
-                DatabaseName = database.Name;
-                RootDirectory = database.RootDirectory;
+                    if (choice == UnsavedChangesChoice.Save)
+                    {
+                        if (!SaveDatabase())
+                        {
+                            return;
+                        }
+
+                        if (openingSameDatabase)
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                _isApplyingDatabase = true;
+                try
+                {
+                    SelectedFile = null;
+                    FileNameFilter = string.Empty;
+                    OnlyMissingFiles = false;
+                    Files.Clear();
+                    foreach (var fileItem in fileItems)
+                    {
+                        Files.Add(fileItem);
+                    }
+                    RefreshAvailableTags(preserveSelection: false);
+
+                    DatabaseName = database.Name;
+                    RootDirectory = database.RootDirectory;
+                    DatabaseFilePath = fullPath;
+                    IsModified = false;
+                }
+                finally
+                {
+                    _isApplyingDatabase = false;
+                }
+
                 _recentDatabasePaths = AppSettingsStore.AddRecentDatabase(_recentDatabasePaths, fullPath);
                 SaveRecentDatabases();
             }
@@ -303,7 +415,7 @@ namespace LocalFileDB.ViewModels
             FileDatabaseEntry entry,
             string rootDirectory,
             IEnumerable<string>? availableTags = null) =>
-            new(entry, rootDirectory, availableTags ?? AvailableTags.Select(tag => tag.Name), RemoveFile, () => RefreshAvailableTags());
+            new(entry, rootDirectory, availableTags ?? AvailableTags.Select(tag => tag.Name), RemoveFile, OnFileTagsChanged);
 
         /// <summary>
         /// Rebuilds recent menu items from the stored database paths.
@@ -351,6 +463,10 @@ namespace LocalFileDB.ViewModels
                     Files.Add(file);
                 }
                 RefreshAvailableTags();
+                if (newFiles.Count > 0)
+                {
+                    MarkModified();
+                }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -376,12 +492,12 @@ namespace LocalFileDB.ViewModels
         /// <summary>
         /// Saves the edited name, root directory, and all current file entries.
         /// </summary>
-        private void SaveDatabase()
+        private bool SaveDatabase()
         {
             if (string.IsNullOrWhiteSpace(DatabaseName))
             {
                 _dialogService.ShowWarning("Enter a database name before saving.", "Save database");
-                return;
+                return false;
             }
 
             var database = new FileDatabase
@@ -395,11 +511,13 @@ namespace LocalFileDB.ViewModels
             {
                 _databaseService.Save(DatabaseFilePath, database);
                 DatabaseName = database.Name;
-                RefreshFileItems();
+                IsModified = false;
+                return true;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
             {
                 _dialogService.ShowError($"Could not save the database.{Environment.NewLine}{Environment.NewLine}{exception.Message}", "Save database");
+                return false;
             }
         }
 
@@ -453,8 +571,11 @@ namespace LocalFileDB.ViewModels
                 SelectedFile = null;
             }
 
-            Files.Remove(fileItem);
-            RefreshAvailableTags();
+            if (Files.Remove(fileItem))
+            {
+                RefreshAvailableTags();
+                MarkModified();
+            }
         }
 
         /// <summary>
@@ -484,6 +605,7 @@ namespace LocalFileDB.ViewModels
             var matchingFiles = Files
                 .Where(file => (string.IsNullOrWhiteSpace(FileNameFilter)
                         || file.FileName.Contains(FileNameFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+                    && (!OnlyMissingFiles || !file.Exists)
                     && (selectedTags.Count == 0
                         || (file.Entry.Tags ?? []).Any(tag => selectedTags.Contains(tag))))
                 .ToList();
@@ -560,6 +682,39 @@ namespace LocalFileDB.ViewModels
         }
 
         /// <summary>
+        /// Refreshes catalog tags and marks a file-tag assignment as an unsaved edit.
+        /// </summary>
+        private void OnFileTagsChanged()
+        {
+            RefreshAvailableTags();
+            MarkModified();
+        }
+
+        /// <summary>
+        /// Clears the name, tag, and missing-file filters.
+        /// </summary>
+        private void ResetFilters()
+        {
+            FileNameFilter = string.Empty;
+            OnlyMissingFiles = false;
+            foreach (var tag in AvailableTags.Where(tag => tag.IsSelected).ToList())
+            {
+                tag.IsSelected = false;
+            }
+        }
+
+        /// <summary>
+        /// Marks the open catalog as changed and updates the title indicator.
+        /// </summary>
+        private void MarkModified()
+        {
+            if (IsDatabaseOpen && !_isApplyingDatabase)
+            {
+                IsModified = true;
+            }
+        }
+
+        /// <summary>
         /// Loads an image or Windows Shell video thumbnail for the selected entry.
         /// </summary>
         private async Task UpdatePreviewAsync(FileEntryViewModel? fileItem)
@@ -569,6 +724,17 @@ namespace LocalFileDB.ViewModels
             PreviewMessage = fileItem is null ? "Select a file to preview." : string.Empty;
 
             if (fileItem is null)
+            {
+                return;
+            }
+
+            fileItem.RefreshSystemMetadata();
+            if (OnlyMissingFiles)
+            {
+                RefreshDisplayedFiles();
+            }
+
+            if (!ReferenceEquals(SelectedFile, fileItem))
             {
                 return;
             }
