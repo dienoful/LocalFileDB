@@ -46,8 +46,10 @@ namespace LocalFileDB.ViewModels
             _recentDatabasePaths = _settingsStore.LoadRecentDatabasePaths();
 
             OpenDatabaseCommand = new RelayCommand(_ => OpenDatabaseFromDialog());
+            NewDatabaseCommand = new RelayCommand(_ => CreateNewDatabase());
             AddFilesCommand = new RelayCommand(_ => AddFiles(), _ => IsDatabaseOpen);
             SaveDatabaseCommand = new RelayCommand(_ => SaveDatabase(), _ => IsDatabaseOpen);
+            SaveDatabaseAsCommand = new RelayCommand(_ => SaveDatabaseAs(), _ => IsDatabaseOpen);
             RemoveSelectedFileCommand = new RelayCommand(_ => RemoveSelectedFile(), _ => SelectedFile is not null);
             BrowseRootDirectoryCommand = new RelayCommand(_ => BrowseRootDirectory(), _ => IsDatabaseOpen);
             AddTagCommand = new RelayCommand(_ => AddTagToSelectedFile(), _ => SelectedFile is not null && !string.IsNullOrWhiteSpace(NewTagName));
@@ -296,6 +298,11 @@ namespace LocalFileDB.ViewModels
         public RelayCommand OpenDatabaseCommand { get; }
 
         /// <summary>
+        /// Gets the command that creates and opens a new empty database.
+        /// </summary>
+        public RelayCommand NewDatabaseCommand { get; }
+
+        /// <summary>
         /// Gets the command that adds files to the open database.
         /// </summary>
         public RelayCommand AddFilesCommand { get; }
@@ -304,6 +311,11 @@ namespace LocalFileDB.ViewModels
         /// Gets the command that saves the open database.
         /// </summary>
         public RelayCommand SaveDatabaseCommand { get; }
+
+        /// <summary>
+        /// Gets the command that saves the current database to a different file.
+        /// </summary>
+        public RelayCommand SaveDatabaseAsCommand { get; }
 
         /// <summary>
         /// Gets the command that removes the selected database entry.
@@ -330,6 +342,137 @@ namespace LocalFileDB.ViewModels
             {
                 OpenDatabase(path);
             }
+        }
+
+        /// <summary>
+        /// Creates an empty database at the selected path and makes it active.
+        /// </summary>
+        private void CreateNewDatabase()
+        {
+            var path = _dialogService.SelectDatabaseSavePath("Create database", "New database.json");
+            if (path is null || !ConfirmSwitchAwayFromModifiedDatabase())
+            {
+                return;
+            }
+
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                var database = new FileDatabase
+                {
+                    Name = Path.GetFileNameWithoutExtension(fullPath),
+                    RootDirectory = Path.GetDirectoryName(fullPath) ?? string.Empty,
+                    Files = []
+                };
+                _databaseService.Save(fullPath, database);
+                ApplyDatabase(database, fullPath);
+                RememberDatabase(fullPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
+            {
+                _dialogService.ShowError($"Could not create the database.{Environment.NewLine}{Environment.NewLine}{exception.Message}", "Create database");
+            }
+        }
+
+        /// <summary>
+        /// Saves the current catalog to a selected path and switches the active path after success.
+        /// </summary>
+        private void SaveDatabaseAs()
+        {
+            if (!IsDatabaseOpen)
+            {
+                return;
+            }
+
+            var suggestedName = $"{(string.IsNullOrWhiteSpace(DatabaseName) ? "Database" : DatabaseName.Trim())}.json";
+            var path = _dialogService.SelectDatabaseSavePath("Save database as", suggestedName);
+            if (path is null)
+            {
+                return;
+            }
+
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                var database = CreateDatabaseSnapshot(Path.GetFileNameWithoutExtension(fullPath));
+                _databaseService.Save(fullPath, database);
+                DatabaseName = database.Name;
+                DatabaseFilePath = fullPath;
+                IsModified = false;
+                RememberDatabase(fullPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Text.Json.JsonException)
+            {
+                _dialogService.ShowError($"Could not save the database as a new file.{Environment.NewLine}{Environment.NewLine}{exception.Message}", "Save database as");
+            }
+        }
+
+        /// <summary>
+        /// Resolves unsaved edits before replacing the active database.
+        /// </summary>
+        private bool ConfirmSwitchAwayFromModifiedDatabase()
+        {
+            if (!IsModified)
+            {
+                return true;
+            }
+
+            var choice = _dialogService.AskAboutUnsavedChanges(
+                $"Save changes to '{DatabaseName}' before continuing?",
+                "Unsaved changes");
+            return choice switch
+            {
+                UnsavedChangesChoice.Save => SaveDatabase(),
+                UnsavedChangesChoice.Discard => true,
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// Replaces the current screen state with a database that has already been saved or loaded.
+        /// </summary>
+        private void ApplyDatabase(FileDatabase database, string fullPath)
+        {
+            _isApplyingDatabase = true;
+            try
+            {
+                SelectedFile = null;
+                FileNameFilter = string.Empty;
+                OnlyMissingFiles = false;
+                Files.Clear();
+                foreach (var entry in database.Files ?? [])
+                {
+                    Files.Add(CreateFileItem(entry, database.RootDirectory));
+                }
+                RefreshAvailableTags(preserveSelection: false);
+                DatabaseName = database.Name;
+                RootDirectory = database.RootDirectory;
+                DatabaseFilePath = fullPath;
+                IsModified = false;
+            }
+            finally
+            {
+                _isApplyingDatabase = false;
+            }
+        }
+
+        /// <summary>
+        /// Creates the serialized catalog snapshot from the current editable state.
+        /// </summary>
+        private FileDatabase CreateDatabaseSnapshot(string? name = null) => new()
+        {
+            Name = name ?? DatabaseName.Trim(),
+            RootDirectory = RootDirectory,
+            Files = Files.Select(file => file.Entry).ToList()
+        };
+
+        /// <summary>
+        /// Adds the path to recent databases and persists the application setting.
+        /// </summary>
+        private void RememberDatabase(string fullPath)
+        {
+            _recentDatabasePaths = AppSettingsStore.AddRecentDatabase(_recentDatabasePaths, fullPath);
+            SaveRecentDatabases();
         }
 
         /// <summary>

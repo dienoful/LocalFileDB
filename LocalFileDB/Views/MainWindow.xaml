@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Icon="/Assest/main-icon.png"
-        Title="{Binding WindowTitle}" Height="650" Width="1280" MinWidth="950" MinHeight="450"
+        Title="{Binding WindowTitle}" Height="700" Width="1280" MinWidth="950" MinHeight="450"
         Closing="Window_Closing">
     <!-- Keep view-only converters in XAML; screen state comes from the ViewModel. -->
     <Window.Resources>
@@ -11,6 +11,7 @@
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
+                <MenuItem Header="_New database..." Command="{Binding NewDatabaseCommand}" />
                 <MenuItem Header="_Open database..." Command="{Binding OpenDatabaseCommand}" />
                 <MenuItem Header="Recent databases" ItemsSource="{Binding RecentDatabases}">
                     <MenuItem.ItemContainerStyle>
@@ -25,6 +26,7 @@
                 <MenuItem Header="_Remove selected file" Command="{Binding RemoveSelectedFileCommand}" />
                 <Separator />
                 <MenuItem Header="_Save" Command="{Binding SaveDatabaseCommand}" />
+                <MenuItem Header="Save _as..." Command="{Binding SaveDatabaseAsCommand}" IsEnabled="{Binding IsDatabaseOpen}" />
             </MenuItem>
         </Menu>
 
@@ -126,6 +128,9 @@
                                 <TextBlock Text="{Binding SelectedFile.FileName}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
                                 <TextBlock Text="Path" FontWeight="SemiBold" Margin="0,12,0,2" />
                                 <TextBlock Text="{Binding SelectedFile.ResolvedPath}" TextWrapping="Wrap" />
+                                <Border BorderBrush="#D0D0D0" BorderThickness="1" Margin="0,16,0,0" MinHeight="220" Background="#F7F7F7">
+                                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" MaxHeight="420" />
+                                </Border>
                                 <TextBlock Text="Tags" FontWeight="SemiBold" Margin="0,12,0,2" />
                                 <ItemsControl ItemsSource="{Binding SelectedFile.TagOptions}">
                                     <ItemsControl.ItemTemplate>
@@ -144,9 +149,6 @@
                                     <TextBox Text="{Binding NewTagName, UpdateSourceTrigger=PropertyChanged}"
                                              ToolTip="Enter a new tag name" />
                                 </DockPanel>
-                                <Border BorderBrush="#D0D0D0" BorderThickness="1" Margin="0,16,0,0" MinHeight="220" Background="#F7F7F7">
-                                    <Image Source="{Binding PreviewImage}" Stretch="Uniform" MaxHeight="420" />
-                                </Border>
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>

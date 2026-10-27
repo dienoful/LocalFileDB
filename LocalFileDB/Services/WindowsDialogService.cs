@@ -26,6 +26,24 @@ namespace LocalFileDB.Services
         }
 
         /// <summary>
+        /// Prompts for a destination JSON file for a new or copied database.
+        /// </summary>
+        public string? SelectDatabaseSavePath(string title, string suggestedFileName)
+        {
+            var dialog = new SaveFileDialog
+            {
+                Title = title,
+                Filter = "JSON database (*.json)|*.json",
+                DefaultExt = ".json",
+                AddExtension = true,
+                FileName = suggestedFileName,
+                OverwritePrompt = true
+            };
+
+            return dialog.ShowDialog() == true ? dialog.FileName : null;
+        }
+
+        /// <summary>
         /// Prompts the user to select one or more catalog files.
         /// </summary>
         public IReadOnlyList<string> SelectFiles()
